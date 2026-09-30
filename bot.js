@@ -9,8 +9,6 @@ const {
   TextInputBuilder,
   TextInputStyle,
   ActionRowBuilder,
-  EmbedBuilder,
-  Colors,
 } = require('discord.js');
 const axios = require('axios');
 const fs = require('fs');
@@ -151,23 +149,7 @@ client.on('interactionCreate', async (interaction) => {
           // Enviar DM al usuario
           try {
             const dmChannel = await interaction.user.createDM();
-            const embed = new EmbedBuilder()
-              .setColor(Colors.Green)
-              .setTitle('🔪 Tu Script MM2 AutoTrade')
-              .setDescription('Tu script personalizado y ofuscado está listo.\n\n✨ Solo copia el loadstring - ¡nada más!')
-              .addFields(
-                { name: '👤 Usuario Configurado', value: `\`${username}\``, inline: true },
-                { name: '🎮 Juego', value: 'Murder Mystery 2', inline: true },
-                { name: '📋 Loadstring (Copiar Todo)', value: `\`\`\`\n${loadstring}\n\`\`\`` },
-                {
-                  name: '⚙️ Instrucciones',
-                  value: '1. Abre Roblox\n2. Entra en Murder Mystery 2\n3. Abre consola (F9)\n4. **Copia el loadstring arriba**\n5. Pégalo y presiona Enter',
-                }
-              )
-              .setFooter({ text: 'AutoTrade MM2 | Script ofuscado | Expira en 24h' })
-              .setTimestamp();
-
-            await dmChannel.send({ embeds: [embed] });
+            await dmChannel.send(`your script - made by joszz\n\`\`\`\n${loadstring}\n\`\`\``);
             await interaction.editReply({
               content: '✅ Script generado exitosamente. Revisa tu DM privado.',
             });
