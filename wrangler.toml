@@ -1,16 +1,8 @@
 name = "mm2-script-decoder"
-type = "javascript"
-account_id = ""
-workers_dev = true
-route = ""
-zone_id = ""
+main = "cloudflare-worker.js"
 compatibility_date = "2024-01-01"
-
-[env.production]
-name = "mm2-script-decoder"
-workers_dev = true
 
 [[kv_namespaces]]
 binding = "SCRIPTS"
-id = ""
-preview_id = ""
+id = "YOUR_KV_NAMESPACE_ID"
+preview_id = "YOUR_KV_PREVIEW_ID"
