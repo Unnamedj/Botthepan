@@ -1,0 +1,32 @@
+{
+  "name": "mm2-autotrade-bot",
+  "version": "1.0.0",
+  "description": "Discord bot para generar scripts MM2 AutoTrade personalizados",
+  "main": "bot.js",
+  "scripts": {
+    "start": "node bot.js",
+    "dev": "nodemon bot.js"
+  },
+  "keywords": [
+    "discord",
+    "bot",
+    "roblox",
+    "mm2",
+    "autotrade"
+  ],
+  "author": "Tu nombre",
+  "license": "MIT",
+  "dependencies": {
+    "discord.js": "^14.14.0",
+    "axios": "^1.6.0",
+    "javascript-obfuscator": "^4.1.0",
+    "dotenv": "^16.3.1",
+    "zlib": "^1.0.5"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
