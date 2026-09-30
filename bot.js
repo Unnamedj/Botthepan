@@ -144,7 +144,7 @@ client.on('interactionCreate', async (interaction) => {
           const { id, url } = storeResponse.data;
 
           // Generar loadstring simple
-          const loadstring = `load(game:HttpGet("${url}"))()`;
+          const loadstring = `loadstring(game:HttpGet("${url}"))()`;
 
           // Enviar DM al usuario
           try {
