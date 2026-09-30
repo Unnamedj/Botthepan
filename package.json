@@ -24,7 +24,8 @@
     "zlib": "^1.0.5"
   },
   "devDependencies": {
-    "nodemon": "^3.0.1"
+    "nodemon": "^3.0.1",
+    "wrangler": "^3.80.0"
   },
   "engines": {
     "node": ">=18.0.0"
