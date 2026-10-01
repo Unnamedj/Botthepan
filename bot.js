@@ -30,15 +30,51 @@ try {
 
 // --- Sistema de control ---
 const OWNER_ID = '842098865661935677';
+const DATA_FILE = './data.json';
+
 const whitelistUsers = new Set();   // IDs de usuarios permitidos
 const whitelistRoles = new Set();   // IDs de roles permitidos
 const bannedUsers = new Set();
-const cooldowns = new Map();        // userId -> timestamp
-const COOLDOWN_MS = 30 * 60 * 1000; // 30 minutos
+const cooldowns = new Map();        // userId -> timestamp (no se persiste)
+let cooldownMs = 30 * 60 * 1000;    // 30 minutos por defecto
 const scriptLogs = [];              // últimos 50 logs
 let totalScripts = 0;
 let reactEnabled = true;
 const botStartTime = Date.now();
+
+// --- Persistencia ---
+function loadData() {
+  try {
+    const raw = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
+    (raw.whitelistUsers || []).forEach(id => whitelistUsers.add(id));
+    (raw.whitelistRoles || []).forEach(id => whitelistRoles.add(id));
+    (raw.bannedUsers || []).forEach(id => bannedUsers.add(id));
+    if (typeof raw.cooldownMs === 'number') cooldownMs = raw.cooldownMs;
+    if (typeof raw.totalScripts === 'number') totalScripts = raw.totalScripts;
+    (raw.scriptLogs || []).forEach(l => scriptLogs.push(l));
+    console.log('✅ Datos cargados desde data.json');
+  } catch {
+    console.log('ℹ️ No hay data.json previo, empezando limpio');
+  }
+}
+
+function saveData() {
+  const data = {
+    whitelistUsers: [...whitelistUsers],
+    whitelistRoles: [...whitelistRoles],
+    bannedUsers: [...bannedUsers],
+    cooldownMs,
+    totalScripts,
+    scriptLogs: scriptLogs.slice(0, 50),
+  };
+  try {
+    fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
+  } catch (err) {
+    console.error('❌ Error guardando data.json:', err.message);
+  }
+}
+
+loadData();
 
 function isWhitelisted(interaction) {
   if (interaction.user.id === OWNER_ID) return true;
@@ -158,7 +194,7 @@ client.on('interactionCreate', async (interaction) => {
         // Verificar cooldown
         const lastUsed = cooldowns.get(interaction.user.id);
         if (lastUsed) {
-          const remaining = COOLDOWN_MS - (Date.now() - lastUsed);
+          const remaining = cooldownMs - (Date.now() - lastUsed);
           if (remaining > 0) {
             const mins = Math.ceil(remaining / 60000);
             return interaction.editReply({ content: `⏳ Debes esperar **${mins} minuto(s)** antes de generar otro script.` });
@@ -190,6 +226,7 @@ client.on('interactionCreate', async (interaction) => {
             scriptLogs.unshift({ tag: interaction.user.tag, id: interaction.user.id, robloxUser: username, time: new Date().toISOString() });
             if (scriptLogs.length > 50) scriptLogs.pop();
             updateStatus();
+            saveData();
 
             console.log(`📝 Script generado para ${interaction.user.tag} (${username}) - ID: ${id}`);
           } catch (err) {
@@ -336,6 +373,7 @@ client.on('messageCreate', async (message) => {
     if (!userId) return;
     bannedUsers.add(userId);
     cooldowns.delete(userId);
+    saveData();
     await message.reply(`🚫 Usuario \`${userId}\` baneado.`).catch(() => {});
     return;
   }
@@ -344,6 +382,7 @@ client.on('messageCreate', async (message) => {
     const userId = content.slice(7).trim();
     if (!userId) return;
     bannedUsers.delete(userId);
+    saveData();
     await message.reply(`✅ Usuario \`${userId}\` desbaneado.`).catch(() => {});
     return;
   }
@@ -355,12 +394,15 @@ client.on('messageCreate', async (message) => {
 
     if (sub === 'add' && id) {
       whitelistUsers.add(id);
+      saveData();
       await message.reply(`✅ Usuario \`${id}\` añadido a la whitelist.`).catch(() => {});
     } else if (sub === 'remove' && id) {
       whitelistUsers.delete(id);
+      saveData();
       await message.reply(`✅ Usuario \`${id}\` eliminado de la whitelist.`).catch(() => {});
     } else if (sub === 'role' && id) {
       whitelistRoles.add(id);
+      saveData();
       await message.reply(`✅ Rol \`${id}\` añadido a la whitelist.`).catch(() => {});
     } else if (sub === 'list') {
       const users = [...whitelistUsers].join(', ') || 'ninguno';
@@ -378,8 +420,8 @@ client.on('messageCreate', async (message) => {
       await message.reply('Uso: `.cooldown <minutos>`').catch(() => {});
       return;
     }
-    // Actualizar cooldown dinámicamente
-    Object.defineProperty(global, 'COOLDOWN_OVERRIDE', { value: mins * 60 * 1000, writable: true, configurable: true });
+    cooldownMs = mins * 60 * 1000;
+    saveData();
     await message.reply(`✅ Cooldown cambiado a **${mins} minuto(s)**.`).catch(() => {});
     return;
   }

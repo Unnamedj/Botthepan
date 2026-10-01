@@ -28,6 +28,9 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
+# Runtime data (whitelist, bans, counter)
+data.json
+
 # Misc
 .cache/
 dist/
