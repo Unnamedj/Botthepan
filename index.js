@@ -1,8 +1,20 @@
-// Iniciar el servidor HTTP primero
+const axios = require('axios');
+
 require('./server.js');
 
-// Esperar 1 segundo para que el servidor se inicie
 setTimeout(() => {
-  // Luego iniciar el bot Discord
   require('./bot.js');
 }, 1000);
+
+// Autoping cada 10 minutos para mantener Render despierto
+const SELF_URL = process.env.RENDER_EXTERNAL_URL;
+if (SELF_URL) {
+  setInterval(async () => {
+    try {
+      await axios.get(`${SELF_URL}/health`);
+      console.log('🔄 Autoping OK');
+    } catch {
+      console.warn('⚠️ Autoping falló');
+    }
+  }, 10 * 60 * 1000);
+}
