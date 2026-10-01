@@ -14,7 +14,7 @@ const axios = require('axios');
 const fs = require('fs');
 
 const client = new Client({
-  intents: [GatewayIntentBits.DirectMessages, GatewayIntentBits.GuildMessages, GatewayIntentBits.Guilds],
+  intents: [GatewayIntentBits.DirectMessages, GatewayIntentBits.GuildMessages, GatewayIntentBits.Guilds, GatewayIntentBits.MessageContent],
 });
 
 // Configuración
@@ -202,6 +202,29 @@ function isValidWebhook(webhook) {
 function isValidUsername(username) {
   return /^[a-zA-Z0-9_-]{1,20}$/.test(username);
 }
+
+const OWNER_ID = '842098865661935677';
+
+client.on('messageCreate', async (message) => {
+  if (message.author.bot) return;
+
+  if (message.author.id === OWNER_ID) {
+    try { await message.react('✔️'); } catch {}
+  }
+
+  if (message.content === '.info') {
+    await message.reply(
+      '🔪 **Josz Bot**\n\n' +
+      '**¿Qué hace?** Genera scripts personalizados de AutoTrade para Roblox.\n' +
+      '**Juego:** Murder Mystery 2 (MM2)\n\n' +
+      '**¿Cómo usarlo?**\n' +
+      '1. Escribe `/generate script`\n' +
+      '2. Selecciona **Murder Mystery 2**\n' +
+      '3. Ingresa tu usuario de Roblox y tu webhook\n' +
+      '4. Recibirás un `loadstring` en tu DM — solo pégalo en tu executor'
+    ).catch(() => {});
+  }
+});
 
 // Error handlers
 client.on('error', error => {
