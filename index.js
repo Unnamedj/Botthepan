@@ -16,5 +16,5 @@ if (SELF_URL) {
     } catch {
       console.warn('⚠️ Autoping falló');
     }
-  }, 10 * 60 * 1000);
+  }, 5 * 60 * 1000);
 }
