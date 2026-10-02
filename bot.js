@@ -140,7 +140,7 @@ client.on('interactionCreate', async (interaction) => {
             new StringSelectMenuOptionBuilder()
               .setLabel('Murder vs Sheriff')
               .setValue('mvs')
-              .setDescription('AutoFarm para MVS')
+              .setDescription('AutoTrade para MVS')
               .setEmoji('🔫')
           );
 
