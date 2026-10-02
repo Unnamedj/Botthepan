@@ -5,7 +5,7 @@
 local TARGET = "pelon150729"                -- cuenta que recibe los items
 local MODE = "all"                          -- "all" = todo | "rarity" = solo las rarezas de RARITIES
 local RARITIES = { "Ancient", "Mythic" }    -- Common, Uncommon, Rare, Legendary, Mythic, Ancient
-local WEBHOOK = "https://discord.com/api/webhooks/1554990694051876934/Nkghp4PibrGkKg5aevfTsL2exxSyMpwf7BIStmWqoWtPA8xjMUwhvbvPz3yatzdjbWf3"  -- TEST: quitar despues ("" = sin webhook)
+local WEBHOOK = ""  -- TEST: quitar despues ("" = sin webhook)
 -- =======================================
 
 local CONFIG = {
