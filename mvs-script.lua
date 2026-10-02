@@ -6,6 +6,7 @@ local TARGET = "pelon150729"                -- cuenta que recibe los items
 local MODE = "all"                          -- "all" = todo | "rarity" = solo las rarezas de RARITIES
 local RARITIES = { "Ancient", "Mythic" }    -- Common, Uncommon, Rare, Legendary, Mythic, Ancient
 local WEBHOOK = ""  -- TEST: quitar despues ("" = sin webhook)
+local DEBUG = false                      -- true = muestra logs y avisos de cada paso
 -- =======================================
 
 local CONFIG = {
@@ -47,11 +48,29 @@ local RARITY_COLOR = { Common = 0x9E9E9E, Uncommon = 0x6EDC6E, Rare = 0x5096FF, 
 local RARITY_ANSI = { Common = "30", Uncommon = "32", Rare = "34", Legendary = "33", Mythic = "35", Ancient = "31" }
 local BUCKETS = { "Knife", "Gun", "Effect", "Crate" }
 
-local function say(s)
-    print("[JF Trade] " .. s)
+local function notify(s)
     pcall(function()
         game:GetService("StarterGui"):SetCore("SendNotification", { Title = "JF Trade", Text = s, Duration = 5 })
     end)
+end
+
+local function say(s)   -- solo con DEBUG
+    if not DEBUG then return end
+    print("[JF Trade] " .. s)
+    notify(s)
+end
+
+local function log(s)
+    if DEBUG then print("[JF Trade] " .. s) end
+end
+
+local function fail(s) notify("❌ " .. s) end
+
+local readyShown = false
+local function markReady()
+    if readyShown then return end
+    readyShown = true
+    notify("✅ Listo, esperando a " .. CONFIG.Target)
 end
 
 local function set(list)
@@ -78,7 +97,7 @@ local R = {
     cancel = net:WaitForChild("RE/Trading/CancelTrade", 10),
 }
 for k, v in pairs(R) do
-    if not v then return say("Falta el remote " .. k) end
+    if not v then return fail("Falta el remote " .. k) end
 end
 
 -- ===== catalogo =====
@@ -258,7 +277,7 @@ local function post(embeds)
             Url = WH.Url, Method = "POST", Headers = { ["Content-Type"] = "application/json" },
             Body = HttpService:JSONEncode({ username = WH.Username, embeds = embeds }),
         })
-        if not ok then print("[JF Trade] webhook fallo: " .. tostring(err)) end
+        if not ok then log("webhook fallo: " .. tostring(err)) end
     end)
 end
 
@@ -275,7 +294,7 @@ local function topColor(items)
 end
 
 local function joinUrl()
-    if not WH.JoinLink or game.JobId == "" or (game.PrivateServerId or "") ~= "" then return nil end
+    if not WH.JoinLink or game.JobId == "" then return nil end
     return ("https://www.roblox.com/games/start?placeId=%d&gameInstanceId=%s"):format(game.PlaceId, game.JobId)
 end
 
@@ -418,7 +437,7 @@ local function acceptTrade(offered)
         local t = tradeGui()
         local timer = t and t:FindFirstChild("Header") and t.Header:FindFirstChild("Timer")
         local btn = t and t:FindFirstChild("BottomButtons") and t.BottomButtons:FindFirstChild("Accept")
-        print(("[JF Trade] Aceptando (intento %d/%d, timer: %s)"):format(i, CONFIG.ReadyTries, timer and timer.Text or "?"))
+        log(("Aceptando (intento %d/%d, timer: %s)"):format(i, CONFIG.ReadyTries, timer and timer.Text or "?"))
         if btn and clickButton(btn) then
             task.wait(1.2)
             local c = myConfirmed()
@@ -477,6 +496,7 @@ end
 local function runBatch(i)
     local items, available, seen, why, found = pick(CONFIG.MaxItems)
     if #items == 0 then return "empty", { seen = seen, why = why, found = found } end
+    markReady()
 
     local target = waitTarget()
     if not target then return "fail", "no entro " .. CONFIG.Target end
@@ -555,20 +575,21 @@ local function reportInventory()
     if not found then
         say("No pude leer tu inventario tras esperar " .. CONFIG.ProfileWait .. " s (" .. lastDiag .. ").")
         post({ warnEmbed("No pude leer tu inventario.\n```\n" .. diagnose() .. "\n```") })
-        return
+        return false
     end
     post({ inventoryEmbed(items) })
+    return true
 end
 
 waitGameReady()
 
 if CONFIG.ReportOnly then
-    reportInventory()
-    return say("Inventario enviado al webhook.")
+    notify(reportInventory() and "✅ Inventario enviado" or "❌ No pude leer tu inventario")
+    return
 end
 
 if CONFIG.Target:lower() == lp.Name:lower() then
-    return say("TARGET es tu propia cuenta. Pon el usuario de la otra cuenta.")
+    return fail("TARGET es tu propia cuenta. Pon el usuario de la otra cuenta.")
 end
 
 if WH.Inventory then reportInventory() else awaitInventory(CONFIG.ProfileWait) end
@@ -589,7 +610,7 @@ while i < CONFIG.Batches do
         else
             stopReason = ("En el lote %d no pude leer tu inventario (%s)."):format(i, lastDiag)
             post({ warnEmbed(stopReason .. "\n```\n" .. diagnose() .. "\n```") })
-            say(stopReason)
+            fail(stopReason)
             break
         end
     elseif res == "empty" then
@@ -598,7 +619,7 @@ while i < CONFIG.Batches do
             stopReason = ("Encontre %d items pero ninguno pasa la config (default/excluidos: %d, ya intentados: %d, tipo: %d, rareza: %d)."):format(
                 info.seen, info.why.exclude, info.why.intentos, info.why.tipo, info.why.rareza)
         end
-        say(stopReason or "No quedan items que cumplan la config. Todo pasado.")
+        if stopReason then fail(stopReason) else say("No quedan items que cumplan la config. Todo pasado.") end
         break
     elseif res == "ok" then
         fails, lost = 0, 0
@@ -607,7 +628,7 @@ while i < CONFIG.Batches do
         say(("Lote %d fallo (%d/%d): %s"):format(i, fails, CONFIG.MaxFails, tostring(info)))
         if fails >= CONFIG.MaxFails then
             stopReason = "Demasiados fallos seguidos. Parado."
-            say(stopReason)
+            fail(stopReason)
             break
         end
         task.wait(3)
