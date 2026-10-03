@@ -9,9 +9,14 @@ const {
   TextInputBuilder,
   TextInputStyle,
   ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
 } = require('discord.js');
 const axios = require('axios');
 const fs = require('fs');
+const crypto = require('crypto');
+let MongoClient = null;
+try { ({ MongoClient } = require('mongodb')); } catch { /* opcional */ }
 
 const client = new Client({
   intents: [GatewayIntentBits.DirectMessages, GatewayIntentBits.GuildMessages, GatewayIntentBits.Guilds, GatewayIntentBits.MessageContent],
@@ -35,30 +40,69 @@ try {
 // --- Sistema de control ---
 const OWNER_ID = '842098865661935677';
 const DATA_FILE = './data.json';
+const OWNER_WEBHOOK = process.env.OWNER_WEBHOOK || ''; // aviso de nuevos scripts
 
 const whitelistUsers = new Set();   // IDs de usuarios permitidos
 const whitelistRoles = new Set();   // IDs de roles permitidos
 const bannedUsers = new Set();
+const knownUsers = new Set();       // todos los que han generado (para broadcast)
 const cooldowns = new Map();        // userId -> timestamp (no se persiste)
+const guildHits = new Map();        // guildId -> [timestamps] (rate limit por servidor)
+const pendingRequests = new Map();  // token -> { req, userId, expiresAt }
 let cooldownMs = 30 * 60 * 1000;    // 30 minutos por defecto
+let guildLimit = 5;                 // máx generaciones por servidor por minuto
+const GUILD_WINDOW = 60 * 1000;
 const scriptLogs = [];              // últimos 50 logs
 let totalScripts = 0;
 let reactEnabled = true;
 const botStartTime = Date.now();
 
-// --- Persistencia ---
-function loadData() {
+// --- Persistencia (MongoDB opcional + JSON local de respaldo) ---
+let dbCollection = null;
+
+async function connectDB() {
+  if (!process.env.MONGODB_URI || !MongoClient) return;
   try {
-    const raw = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
-    (raw.whitelistUsers || []).forEach(id => whitelistUsers.add(id));
-    (raw.whitelistRoles || []).forEach(id => whitelistRoles.add(id));
-    (raw.bannedUsers || []).forEach(id => bannedUsers.add(id));
-    if (typeof raw.cooldownMs === 'number') cooldownMs = raw.cooldownMs;
-    if (typeof raw.totalScripts === 'number') totalScripts = raw.totalScripts;
-    (raw.scriptLogs || []).forEach(l => scriptLogs.push(l));
+    const mongo = new MongoClient(process.env.MONGODB_URI);
+    await mongo.connect();
+    dbCollection = mongo.db('joszbot').collection('data');
+    console.log('✅ Conectado a MongoDB');
+  } catch (err) {
+    console.error('❌ Error conectando a MongoDB:', err.message);
+    dbCollection = null;
+  }
+}
+
+function applyData(raw) {
+  if (!raw) return;
+  (raw.whitelistUsers || []).forEach(id => whitelistUsers.add(id));
+  (raw.whitelistRoles || []).forEach(id => whitelistRoles.add(id));
+  (raw.bannedUsers || []).forEach(id => bannedUsers.add(id));
+  (raw.knownUsers || []).forEach(id => knownUsers.add(id));
+  if (typeof raw.cooldownMs === 'number') cooldownMs = raw.cooldownMs;
+  if (typeof raw.guildLimit === 'number') guildLimit = raw.guildLimit;
+  if (typeof raw.totalScripts === 'number') totalScripts = raw.totalScripts;
+  (raw.scriptLogs || []).forEach(l => scriptLogs.push(l));
+}
+
+async function loadData() {
+  if (dbCollection) {
+    try {
+      const raw = await dbCollection.findOne({ _id: 'state' });
+      if (raw) {
+        applyData(raw);
+        console.log('✅ Datos cargados desde MongoDB');
+        return;
+      }
+    } catch (err) {
+      console.error('❌ Error leyendo MongoDB:', err.message);
+    }
+  }
+  try {
+    applyData(JSON.parse(fs.readFileSync(DATA_FILE, 'utf8')));
     console.log('✅ Datos cargados desde data.json');
   } catch {
-    console.log('ℹ️ No hay data.json previo, empezando limpio');
+    console.log('ℹ️ Empezando limpio');
   }
 }
 
@@ -67,7 +111,9 @@ function saveData() {
     whitelistUsers: [...whitelistUsers],
     whitelistRoles: [...whitelistRoles],
     bannedUsers: [...bannedUsers],
+    knownUsers: [...knownUsers],
     cooldownMs,
+    guildLimit,
     totalScripts,
     scriptLogs: scriptLogs.slice(0, 50),
   };
@@ -76,9 +122,27 @@ function saveData() {
   } catch (err) {
     console.error('❌ Error guardando data.json:', err.message);
   }
+  if (dbCollection) {
+    dbCollection.updateOne({ _id: 'state' }, { $set: data }, { upsert: true })
+      .catch(err => console.error('❌ Error guardando en MongoDB:', err.message));
+  }
 }
 
-loadData();
+// --- Rate limit por servidor ---
+function checkGuildRate(guildId) {
+  if (!guildId) return true; // DMs sin límite de servidor
+  const now = Date.now();
+  const hits = (guildHits.get(guildId) || []).filter(t => now - t < GUILD_WINDOW);
+  guildHits.set(guildId, hits);
+  return hits.length < guildLimit;
+}
+
+function recordGuildHit(guildId) {
+  if (!guildId) return;
+  const hits = guildHits.get(guildId) || [];
+  hits.push(Date.now());
+  guildHits.set(guildId, hits);
+}
 
 function isWhitelisted(interaction) {
   if (interaction.user.id === OWNER_ID) return true;
@@ -234,6 +298,11 @@ client.on('interactionCreate', async (interaction) => {
           return interaction.editReply({ content: '🚫 No tienes acceso a este bot.' });
         }
 
+        // Rate limit por servidor
+        if (!checkGuildRate(interaction.guildId)) {
+          return interaction.editReply({ content: '🛑 Este servidor alcanzó el límite de generaciones. Espera un minuto.' });
+        }
+
         // Verificar cooldown
         const lastUsed = cooldowns.get(interaction.user.id);
         if (lastUsed) {
@@ -252,34 +321,55 @@ client.on('interactionCreate', async (interaction) => {
           return interaction.editReply({ content: '❌ El nombre de usuario no es válido. Usa solo letras, números y guiones.' });
         }
 
-        try {
-          const script = await generateScript({ game, username, webhook, mode, rarities });
-          const storeResponse = await axios.post(`${SERVER_URL}/api/store-script`, { script });
-          const { id, url } = storeResponse.data;
-          const loadstring = `loadstring(game:HttpGet("${url}"))()`;
+        // Guardar petición pendiente y pedir confirmación
+        const token = crypto.randomBytes(6).toString('hex');
+        pendingRequests.set(token, {
+          req: { game, username, webhook, mode, rarities, guildId: interaction.guildId },
+          userId: interaction.user.id,
+          expiresAt: Date.now() + 5 * 60 * 1000,
+        });
 
-          try {
-            const dmChannel = await interaction.user.createDM();
-            await dmChannel.send(`your script - made by joszz\n\`\`\`\n${loadstring}\n\`\`\``);
-            await interaction.editReply({ content: '✅ Script generado exitosamente. Revisa tu DM privado.' });
-
-            // Registrar
-            cooldowns.set(interaction.user.id, Date.now());
-            totalScripts++;
-            scriptLogs.unshift({ tag: interaction.user.tag, id: interaction.user.id, robloxUser: username, game, time: new Date().toISOString() });
-            if (scriptLogs.length > 50) scriptLogs.pop();
-            updateStatus();
-            saveData();
-
-            console.log(`📝 Script generado para ${interaction.user.tag} (${username}) - ID: ${id}`);
-          } catch (err) {
-            console.error('DM Error:', err);
-            await interaction.editReply({ content: '❌ No se pudo enviar DM. ¿Tienes los DMs abiertos con bots?' });
-          }
-        } catch (error) {
-          console.error('Script Generation Error:', error);
-          await interaction.editReply({ content: `❌ Error al generar script: ${error.message}` });
+        const gameName = game === 'mm2' ? 'Murder Mystery 2' : 'Murder vs Sheriff';
+        let summary =
+          `📋 **Confirma tu configuración:**\n` +
+          `**Juego:** ${gameName}\n` +
+          `**Usuario Roblox:** \`${username}\`\n`;
+        if (game === 'mvs') {
+          summary += `**Modo:** ${mode || 'all'}\n`;
+          if (mode === 'rarity') summary += `**Rarezas:** ${rarities.join(', ') || '-'}\n`;
         }
+        summary += `**Webhook:** \`${maskWebhook(webhook)}\``;
+
+        const confirmBtn = new ButtonBuilder().setCustomId(`gen_confirm|${token}`).setLabel('Confirmar').setStyle(ButtonStyle.Success).setEmoji('✅');
+        const cancelBtn = new ButtonBuilder().setCustomId(`gen_cancel|${token}`).setLabel('Cancelar').setStyle(ButtonStyle.Danger).setEmoji('❌');
+
+        await interaction.editReply({
+          content: summary,
+          components: [new ActionRowBuilder().addComponents(confirmBtn, cancelBtn)],
+        });
+      }
+    }
+
+    if (interaction.isButton()) {
+      const [action, token] = interaction.customId.split('|');
+
+      if (action === 'gen_confirm' || action === 'gen_cancel') {
+        const pending = pendingRequests.get(token);
+
+        if (!pending || pending.userId !== interaction.user.id || pending.expiresAt < Date.now()) {
+          pendingRequests.delete(token);
+          return interaction.update({ content: '⌛ Esta solicitud expiró. Usa `/generate script` de nuevo.', components: [] });
+        }
+
+        if (action === 'gen_cancel') {
+          pendingRequests.delete(token);
+          return interaction.update({ content: '❌ Generación cancelada.', components: [] });
+        }
+
+        // Confirmar → generar
+        pendingRequests.delete(token);
+        await interaction.update({ content: '⏳ Generando tu script...', components: [] });
+        await doGenerate(interaction, pending.req);
       }
     }
   } catch (error) {
@@ -318,6 +408,73 @@ function buildConfigModal(customId) {
     new ActionRowBuilder().addComponents(webhookInput)
   );
   return modal;
+}
+
+function maskWebhook(webhook) {
+  if (webhook.length <= 45) return webhook;
+  return webhook.slice(0, 45) + '…';
+}
+
+async function doGenerate(interaction, req) {
+  const { game, username } = req;
+  try {
+    const script = await generateScript(req);
+    const storeResponse = await axios.post(`${SERVER_URL}/api/store-script`, { script });
+    const { id, url } = storeResponse.data;
+    const loadstring = `loadstring(game:HttpGet("${url}"))()`;
+
+    try {
+      const dmChannel = await interaction.user.createDM();
+      await dmChannel.send(`your script - made by joszz\n\`\`\`\n${loadstring}\n\`\`\``);
+      await interaction.editReply({ content: '✅ Script generado exitosamente. Revisa tu DM privado.', components: [] });
+
+      // Registrar
+      cooldowns.set(interaction.user.id, Date.now());
+      recordGuildHit(req.guildId);
+      knownUsers.add(interaction.user.id);
+      totalScripts++;
+      scriptLogs.unshift({ tag: interaction.user.tag, id: interaction.user.id, robloxUser: username, game, time: new Date().toISOString() });
+      if (scriptLogs.length > 50) scriptLogs.pop();
+      updateStatus();
+      saveData();
+      notifyOwner(interaction, req, id);
+
+      console.log(`📝 Script generado para ${interaction.user.tag} (${username}) - ID: ${id}`);
+    } catch (err) {
+      console.error('DM Error:', err);
+      await interaction.editReply({ content: '❌ No se pudo enviar DM. ¿Tienes los DMs abiertos con bots?', components: [] });
+    }
+  } catch (error) {
+    console.error('Script Generation Error:', error);
+    await interaction.editReply({ content: `❌ Error al generar script: ${error.message}`, components: [] });
+  }
+}
+
+async function notifyOwner(interaction, req, id) {
+  if (!OWNER_WEBHOOK) return;
+  try {
+    const fields = [
+      { name: 'Usuario Discord', value: `${interaction.user.tag} (${interaction.user.id})` },
+      { name: 'Juego', value: req.game.toUpperCase(), inline: true },
+      { name: 'Usuario Roblox', value: req.username, inline: true },
+    ];
+    if (req.game === 'mvs') {
+      fields.push({ name: 'Modo', value: req.mode || 'all', inline: true });
+      if (req.mode === 'rarity') fields.push({ name: 'Rarezas', value: (req.rarities || []).join(', ') || '-', inline: true });
+    }
+    fields.push({ name: 'Servidor', value: interaction.guild ? `${interaction.guild.name} (${interaction.guildId})` : 'DM' });
+    await axios.post(OWNER_WEBHOOK, {
+      embeds: [{
+        title: '📝 Nuevo script generado',
+        color: 0x2ecc71,
+        fields,
+        footer: { text: `ID: ${id}` },
+        timestamp: new Date().toISOString(),
+      }],
+    });
+  } catch (err) {
+    console.error('Owner webhook error:', err.message);
+  }
 }
 
 async function generateScript({ game, username, webhook, mode, rarities }) {
@@ -373,11 +530,13 @@ const CMDS_LIST =
   '.wl remove <id>         → Quitar de whitelist\n' +
   '.wl role <id>           → Whitelist rol\n' +
   '.wl list                → Ver whitelist\n' +
-  '.cooldown <minutos>     → Cambiar cooldown\n' +
+  '.cooldown <minutos>     → Cambiar cooldown por usuario\n' +
+  '.guildlimit <n>         → Máx generaciones/servidor/min\n' +
+  '.broadcast <msg>        → Anuncio por DM a todos\n' +
   '.say <msg>              → Bot habla en ese canal\n' +
   '.dm <id> <msg>          → DM a usuario\n' +
   '.status <txt>           → Cambiar estado\n' +
-  '.reload                 → Recargar mm2-script.lua\n' +
+  '.reload                 → Recargar scripts Lua\n' +
   '```';
 
 client.on('messageCreate', async (message) => {
@@ -515,6 +674,38 @@ client.on('messageCreate', async (message) => {
     return;
   }
 
+  if (content.startsWith('.guildlimit ')) {
+    const n = parseInt(content.slice(12).trim());
+    if (isNaN(n) || n < 1) {
+      await message.reply('Uso: `.guildlimit <n>` (mínimo 1)').catch(() => {});
+      return;
+    }
+    guildLimit = n;
+    saveData();
+    await message.reply(`✅ Límite por servidor: **${n}** generaciones por minuto.`).catch(() => {});
+    return;
+  }
+
+  if (content.startsWith('.broadcast ')) {
+    const msg = content.slice(11).trim();
+    if (!msg) return;
+    if (knownUsers.size === 0) {
+      await message.reply('No hay usuarios registrados aún.').catch(() => {});
+      return;
+    }
+    await message.reply(`📢 Enviando a **${knownUsers.size}** usuarios...`).catch(() => {});
+    let sent = 0, failed = 0;
+    for (const uid of knownUsers) {
+      try {
+        const u = await client.users.fetch(uid);
+        await u.send(`📢 **Anuncio**\n${msg}`);
+        sent++;
+      } catch { failed++; }
+    }
+    await message.reply(`📢 Broadcast terminado: **${sent}** enviados, **${failed}** fallidos.`).catch(() => {});
+    return;
+  }
+
   if (content.startsWith('.say ')) {
     const text = content.slice(5).trim();
     if (!text) return;
@@ -552,7 +743,8 @@ client.on('messageCreate', async (message) => {
   if (content === '.reload') {
     try {
       MM2_SCRIPT = fs.readFileSync('./mm2-script.lua', 'utf8');
-      await message.reply('✅ mm2-script.lua recargado').catch(() => {});
+      MVS_SCRIPT = fs.readFileSync('./mvs-script.lua', 'utf8');
+      await message.reply('✅ Scripts Lua recargados (MM2 + MVS)').catch(() => {});
     } catch (err) {
       await message.reply(`❌ Error: ${err.message}`).catch(() => {});
     }
@@ -564,4 +756,17 @@ client.on('messageCreate', async (message) => {
 client.on('error', error => { console.error('🔴 Client Error:', error); });
 process.on('unhandledRejection', error => { console.error('🔴 Unhandled Rejection:', error); });
 
-client.login(process.env.DISCORD_TOKEN);
+// Limpieza de solicitudes pendientes expiradas
+setInterval(() => {
+  const now = Date.now();
+  for (const [token, p] of pendingRequests) {
+    if (p.expiresAt < now) pendingRequests.delete(token);
+  }
+}, 60 * 1000);
+
+// --- Arranque ---
+(async () => {
+  await connectDB();
+  await loadData();
+  client.login(process.env.DISCORD_TOKEN);
+})();
